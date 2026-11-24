@@ -30,6 +30,24 @@ function App() {
   const [productModal, setProductModal] = useState(false)
   const [editingProduct, setEditingProduct] = useState<(Omit<Product, 'id'> & { id?: number })>(emptyProduct)
   const [checkoutOpen, setCheckoutOpen] = useState(false)
+  const [notifications, setNotifications] = useState<Array<{ id: number; title: string; message: string }>>([])
+
+  const showNotification = (title: string, message: string) => {
+    const id = Date.now()
+    setNotifications((current) => [{ id, title, message }, ...current].slice(0, 4))
+    window.setTimeout(() => {
+      setNotifications((current) => current.filter((item) => item.id !== id))
+    }, 6000)
+
+    if ('Notification' in window && Notification.permission === 'granted') {
+      new Notification(title, { body: message })
+    }
+  }
+
+  const enableBrowserNotifications = async () => {
+    if (!('Notification' in window)) return
+    await Notification.requestPermission()
+  }
 
   useEffect(() => {
     if (!supabase) return
@@ -40,6 +58,36 @@ function App() {
       if (!productsResult.error && productsResult.data?.length) setProducts(productsResult.data as Product[])
       if (!ordersResult.error && ordersResult.data) setOrders(ordersResult.data as Order[])
     })
+
+    const channel = supabase
+      .channel('store-live-updates')
+      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'products' }, (payload) => {
+        const product = payload.new as Product
+        setProducts((current) => [product, ...current.filter((item) => item.id !== product.id)])
+        showNotification('Nuevo producto', `${product.name} ya esta disponible`)
+      })
+      .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'products' }, (payload) => {
+        const product = payload.new as Product
+        setProducts((current) => current.map((item) => item.id === product.id ? product : item))
+      })
+      .on('postgres_changes', { event: 'DELETE', schema: 'public', table: 'products' }, (payload) => {
+        const oldProduct = payload.old as { id: number }
+        setProducts((current) => current.filter((item) => item.id !== oldProduct.id))
+      })
+      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'orders' }, (payload) => {
+        const order = payload.new as Order
+        setOrders((current) => [order, ...current.filter((item) => item.id !== order.id)])
+        showNotification('Nuevo pedido', `Pedido #${order.id} de ${order.customer_name} por ${money(order.total)}`)
+      })
+      .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'orders' }, (payload) => {
+        const order = payload.new as Order
+        setOrders((current) => current.map((item) => item.id === order.id ? order : item))
+      })
+      .subscribe()
+
+    return () => {
+      void supabase?.removeChannel(channel)
+    }
   }, [])
 
   const categories = ['Todos', ...Array.from(new Set(products.map((product) => product.category)))]
@@ -130,6 +178,13 @@ function App() {
           <button onClick={() => setView('admin')}>Administracion</button>
         </nav>
         <div className="header-actions">
+          <button className="notification-button" onClick={enableBrowserNotifications} aria-label="Activar notificaciones">
+            <span className="notification-dot"></span>
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
+              <path d="M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9" />
+              <path d="M13.73 21a2 2 0 0 1-3.46 0" />
+            </svg>
+          </button>
           <button className="icon-button search-button" aria-label="Buscar" onClick={() => document.querySelector<HTMLInputElement>('.search-input')?.focus()}><Search size={20} /></button>
           <button className="icon-button" aria-label="Perfil" onClick={() => setView('admin')}><UserRound size={20} /></button>
           <button className="cart-button" aria-label="Abrir carrito" onClick={() => setCartOpen(true)}>
@@ -320,6 +375,28 @@ function App() {
           </form>
         </div>
       )}
+
+      <div className="notification-stack" aria-live="polite">
+        {notifications.map((notification) => (
+          <button
+            className="live-notification"
+            key={notification.id}
+            onClick={() => {
+              setNotifications((current) => current.filter((item) => item.id !== notification.id))
+              setView('admin')
+            }}
+          >
+            <span className="live-notification-icon">
+              <Package size={18} />
+            </span>
+            <span>
+              <strong>{notification.title}</strong>
+              <small>{notification.message}</small>
+            </span>
+            <X size={16} />
+          </button>
+        ))}
+      </div>
 
       {!isSupabaseConfigured && <div className="demo-ribbon">Modo demostracion · Conecta Supabase con las variables de entorno</div>}
     </div>

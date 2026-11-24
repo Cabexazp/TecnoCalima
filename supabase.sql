@@ -43,3 +43,27 @@ drop policy if exists "Public upload product images" on storage.objects;
 create policy "Public read product images" on storage.objects for select using (bucket_id = 'product-images');
 create policy "Public upload product images" on storage.objects for insert with check (bucket_id = 'product-images');
 
+do $$
+begin
+  if not exists (
+    select 1
+    from pg_publication_tables
+    where pubname = 'supabase_realtime'
+      and schemaname = 'public'
+      and tablename = 'products'
+  ) then
+    alter publication supabase_realtime add table products;
+  end if;
+
+  if not exists (
+    select 1
+    from pg_publication_tables
+    where pubname = 'supabase_realtime'
+      and schemaname = 'public'
+      and tablename = 'orders'
+  ) then
+    alter publication supabase_realtime add table orders;
+  end if;
+end
+$$;
+
